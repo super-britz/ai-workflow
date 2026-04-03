@@ -1,0 +1,24 @@
+{
+  "name": "@ai-workflow/auth",
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {},
+  "dependencies": {
+    "@ai-workflow/db": "workspace:*",
+    "@ai-workflow/env": "workspace:*",
+    "better-auth": "catalog:",
+    "dotenv": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-workflow/config": "workspace:*",
+    "typescript": "^5"
+  }
+}

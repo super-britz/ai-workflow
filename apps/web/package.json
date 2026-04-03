@@ -1,0 +1,47 @@
+{
+  "name": "web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "react-router build",
+    "start": "react-router-serve ./build/server/index.js",
+    "typecheck": "react-router typegen && tsc",
+    "dev:bare": "react-router dev"
+  },
+  "dependencies": {
+    "@ai-sdk/react": "^3.0.3",
+    "@ai-workflow/auth": "workspace:*",
+    "@ai-workflow/env": "workspace:*",
+    "@ai-workflow/ui": "workspace:*",
+    "@react-router/fs-routes": "^7.10.1",
+    "@react-router/node": "^7.10.1",
+    "@react-router/serve": "^7.10.1",
+    "@tanstack/react-form": "^1.28.0",
+    "ai": "catalog:",
+    "better-auth": "catalog:",
+    "dotenv": "catalog:",
+    "isbot": "^5.1.28",
+    "lucide-react": "catalog:",
+    "next-themes": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-router": "^7.10.1",
+    "sonner": "catalog:",
+    "streamdown": "^1.6.10",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-workflow/config": "workspace:*",
+    "@react-router/dev": "^7.10.1",
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/node": "^20",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "alchemy": "catalog:",
+    "react-router-devtools": "^1.1.0",
+    "tailwindcss": "catalog:",
+    "typescript": "^5.8.3",
+    "vite": "^7.2.7",
+    "vite-tsconfig-paths": "^5.1.4"
+  }
+}
