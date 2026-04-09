@@ -89,12 +89,40 @@ import { Button } from "@ai-workflow/ui/components/button";
 ```
 ai-workflow/
 ├── apps/
-│   ├── web/         # 前端应用（React + React Router）
-│   └── server/      # 后端 API（Hono）
+│   ├── web/                        # 前端应用（React + React Router + Vite）
+│   │   ├── src/
+│   │   │   ├── components/         # 页面组件（导航栏、登录/注册表单、主题切换、用户菜单等）
+│   │   │   ├── routes/             # 页面路由
+│   │   │   │   ├── _index.tsx      #   首页
+│   │   │   │   ├── login.tsx       #   登录页
+│   │   │   │   ├── dashboard.tsx   #   仪表盘
+│   │   │   │   └── ai.tsx          #   AI 页面
+│   │   │   ├── lib/                # 工具库（auth-client 等）
+│   │   │   ├── root.tsx            # 应用根组件
+│   │   │   └── routes.ts           # 路由配置
+│   │   └── vite.config.ts          # Vite 构建配置
+│   │
+│   └── server/                     # 后端 API（Hono）
+│       └── src/
+│           └── index.ts            # 服务入口
+│
 ├── packages/
-│   ├── ui/          # 共享 shadcn/ui 组件与样式
-│   ├── auth/        # 身份认证配置与逻辑
-│   └── db/          # 数据库表结构与查询
+│   ├── ui/                         # 共享 UI 组件包（shadcn/ui + TailwindCSS）
+│   │   └── src/
+│   │       ├── components/         # 基础组件（Button、Card、Input、Label 等）
+│   │       ├── lib/                # 工具函数（cn 等）
+│   │       └── styles/             # 全局样式与设计令牌
+│   ├── auth/                       # 身份认证（Better Auth 配置）
+│   ├── db/                         # 数据库（Drizzle ORM + PostgreSQL）
+│   │   └── src/
+│   │       ├── index.ts            # 数据库连接
+│   │       └── schema/             # 数据表定义
+│   ├── env/                        # 环境变量校验（Zod）
+│   │   └── src/
+│   │       ├── server.ts           # 服务端环境变量
+│   │       └── web.ts              # 前端环境变量
+│   ├── config/                     # 共享 TypeScript 与工具链配置
+│   └── infra/                      # 基础设施部署（Alchemy + Cloudflare）
 ```
 
 ## 可用脚本
