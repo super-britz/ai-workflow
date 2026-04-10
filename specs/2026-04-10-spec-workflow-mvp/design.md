@@ -1689,4 +1689,304 @@ _（§6 暂无待确认点）_
 
 ---
 
-<!-- §7 将在后续 commit 中追加 -->
+## 7. .claude 规范文件 bootstrap
+
+### 7.1 背景
+
+§4.9 的第 2 个待确认点是"规范文件缺失怎么办"：
+
+- **方案 A**（严格失败）：spec-writer Stage 3 发现 `.claude/ARCHITECTURE.md` 等文件缺失 → 直接 FAILED
+- **方案 B**（降级继续）：缺文件时写"空规范 + 警告"继续生成
+- **方案 C**（自动 bootstrap）：触发另一个 skill 自动创建规范文件模板
+
+§7 选择 **方案 A + 独立 bootstrap 命令** 的组合，既保持 spec-writer 的职责单一，又给用户明确的修复路径。
+
+### 7.2 方案：A + 独立 bootstrap 命令
+
+流程：
+
+- spec-writer 遇到缺失文件 → FAILED
+- 主线程透传错误到 TG："请先运行 `/bootstrap-claude-docs` 创建规范文件模板"
+- 用户运行 `/bootstrap-claude-docs` → 创建 `.claude/` 下 3 个文件的骨架模板
+- 用户填充规范文件内容（或保留默认骨架）→ 重跑 `/start-workflow`
+
+**为什么不选方案 C（spec-writer 自动 bootstrap）**：
+
+- spec-writer 的职责是"写 spec"，不是"初始化项目规范"
+- 自动创建空规范 + 继续生成 spec = 用户得到一份"基于空规范"的 spec，质量不可控
+- 让用户主动意识到"这个项目还没有规范"比偷偷创建更健康
+
+### 7.3 /bootstrap-claude-docs 命令定义
+
+```yaml
+---
+name: bootstrap-claude-docs
+description: 在 .claude/ 下创建 ARCHITECTURE.md / SECURITY.md / CODING_GUIDELINES.md 三个规范文件的骨架模板。已存在的文件跳过，不覆盖。
+allowed-tools:
+  - Read
+  - Write
+  - Bash
+  - Glob
+---
+```
+
+**命令体逻辑**：
+
+```
+1. 检查 .claude/ 目录是否存在,不存在则 mkdir -p
+2. 对每个规范文件 (ARCHITECTURE.md / SECURITY.md / CODING_GUIDELINES.md):
+   a. Glob .claude/<file>
+   b. 若已存在 → 打印 "已存在,跳过"
+   c. 若不存在 → 从 skills/bootstrap-claude-docs/templates/<file> Read → Write 到 .claude/<file>
+3. 输出总结:
+   - 创建的文件列表
+   - 跳过的文件列表
+   - 下一步提示 ("请填充规范文件,然后重新运行 /start-workflow")
+```
+
+### 7.4 三个规范文件的骨架模板
+
+#### 7.4.1 ARCHITECTURE.md 骨架
+
+```markdown
+# Project Architecture
+
+> 本文件定义项目的整体架构决策。spec-writer 在生成 design.md 时会引用这里的定义。
+
+## 技术栈
+
+- 语言:
+- 框架:
+- 数据库:
+- 部署:
+
+## 分层架构
+
+<描述项目的分层结构，例如 API / Service / Repository / DB>
+
+## 核心模块
+
+### <Module Name>
+
+- 职责:
+- 边界:
+- 依赖:
+
+## 模块间依赖关系
+
+<描述或图示>
+
+## 命名约定
+
+- 服务命名:
+- 模块命名:
+- API 路径:
+
+## 跨模块通信
+
+- 同步调用:
+- 异步事件:
+
+## 数据一致性策略
+
+- <描述>
+```
+
+#### 7.4.2 SECURITY.md 骨架
+
+```markdown
+# Security Guidelines
+
+> 本文件定义项目的安全约定。spec-writer 在生成 design.md 的"安全考虑"章节时会参照这里。
+
+## 认证
+
+- 认证方式:
+- token 存储:
+- 过期策略:
+
+## 授权
+
+- 模型 (RBAC / ABAC / 其他):
+- 权限粒度:
+
+## 输入校验
+
+- 校验层级:
+- 校验工具:
+
+## 敏感数据处理
+
+- 脱敏规则:
+- 加密字段:
+- 日志脱敏:
+
+## 安全相关的第三方服务
+
+- <服务名>: <用途 + 约束>
+
+## 已知风险与缓解
+
+- <风险>: <缓解措施>
+```
+
+#### 7.4.3 CODING_GUIDELINES.md 骨架
+
+```markdown
+# Coding Guidelines
+
+> 本文件定义项目的编码约定。spec-writer 在生成 design.md 和 tasks.md 时会参照这里。
+
+## 语言风格
+
+- 命名风格 (camelCase / snake_case 等):
+- 文件组织:
+- 注释约定:
+
+## 错误处理
+
+- 错误类型:
+- 错误传播:
+- 日志级别使用:
+
+## 日志
+
+- 日志格式:
+- 日志字段约定:
+- 敏感字段过滤:
+
+## 测试
+
+- 测试框架:
+- 覆盖率要求:
+- Mock 策略:
+
+## 代码审查
+
+- PR 模板:
+- 审查要点:
+- 合并策略:
+
+## 依赖管理
+
+- 包管理器:
+- 新增依赖的审批流程:
+```
+
+### 7.5 spec-writer Stage 3 失败 → bootstrap 闭环流程
+
+```
+用户: /start-workflow 做个用户头像上传
+  │
+  ▼
+spec-workflow subagent
+  │
+  ▼
+spec-writer Stage 3: 读 .claude/ARCHITECTURE.md
+  │
+  ├─ 文件不存在
+  ▼
+FAILED
+stage: spec-writer:stage-3-read-norms
+reason: |
+  未找到 .claude/ARCHITECTURE.md
+  请先运行 /bootstrap-claude-docs 创建规范文件模板,
+  然后填充项目架构信息,再重新运行 /start-workflow
+  │
+  ▼
+主线程 → TG 提示
+  │
+  ▼
+用户: /bootstrap-claude-docs
+  │
+  ▼
+创建 .claude/{ARCHITECTURE,SECURITY,CODING_GUIDELINES}.md
+  │
+  ▼
+用户手动填充或保留默认骨架
+  │
+  ▼
+用户: /start-workflow 做个用户头像上传   ← 重跑
+```
+
+### 7.6 bootstrap 边界场景
+
+| 场景 | 处理 |
+|---|---|
+| `.claude/` 目录不存在 | 自动 `mkdir -p .claude/` |
+| 3 个文件里只有 1 个存在 | 创建缺失的 2 个，已存在的跳过 |
+| 3 个文件全部存在 | 全部跳过，打印"所有规范文件已存在，无需 bootstrap" |
+| `.claude/` 存在但写入权限不足 | 硬失败，提示用户检查文件系统权限 |
+| 模板文件自身缺失（skills 安装损坏） | 硬失败，提示重新安装 skill |
+
+### 7.7 文件结构
+
+```
+skills/bootstrap-claude-docs/
+  ├── SKILL.md                          # 命令逻辑（参考 §7.3）
+  └── templates/
+      ├── ARCHITECTURE.md               # §7.4.1 骨架
+      ├── SECURITY.md                   # §7.4.2 骨架
+      └── CODING_GUIDELINES.md          # §7.4.3 骨架
+```
+
+**备注**：`bootstrap-claude-docs` 是 slash command 形式（放在 `.claude/commands/` 或等价位置），不是 subagent 调用的 skill；但为了复用"命令 + 模板资源"的组织习惯，把资源也放在 `skills/bootstrap-claude-docs/templates/` 下，由命令 body 内的 Read/Write 使用。
+
+### 7.8 第 7 节决策状态
+
+**已定决策**：
+
+| # | 决策点 | 结论 |
+|---|---|---|
+| 1 | 缺失规范文件的处理方式 | ✅ 方案 A（严格失败）+ 独立 `/bootstrap-claude-docs` 命令 |
+| 2 | bootstrap 覆盖策略 | ✅ 已存在的文件跳过，不覆盖 |
+| 3 | 模板的默认内容 | ✅ 3 个文件各有骨架大纲，用户自己填充具体内容 |
+| 4 | 为什么不让 spec-writer 自动 bootstrap | ✅ 职责分离，让用户显式感知"项目规范未初始化" |
+| 5 | bootstrap 命令的资源位置 | ✅ `skills/bootstrap-claude-docs/templates/` |
+
+**剩余待确认**：
+
+_（§7 暂无待确认点）_
+
+---
+
+## 8. 全文决策汇总
+
+| 章节 | 主要决策点 | 结论 |
+|---|---|---|
+| §1 | 架构分层与文件结构 | 主线程 → spec-workflow subagent → spec-writer + spec-archiver skill |
+| §2 | 主线程输入分类与 URL 处理 | 按 host 分类 + 忽略多余同类 URL + 可选 `type=` 参数 |
+| §2 | subagent 调用协议 | 结构化 prompt，包含 source_type / prd_url / design_url / user_type 等字段 |
+| §3 | subagent 输出格式 | 顶格 `SUCCESS` / `FAILED` + `PROGRESS:` 轨迹 + 事后 timeline |
+| §3 | 子步骤失败传递 | 整体 FAILED，不尝试部分成功 |
+| §3 | type 分类位置 | 放在 spec-writer 而非 subagent |
+| §4 | spec-writer 6 步流程 | 加载分类 → 读规范 → 生成三件套 → 自检 → 写 drafts → 返回 |
+| §4 | type 分类规则 | 规则 0 (user-specified) > 设计稿命中 > 数据层关键词 > fullstack 兜底 |
+| §4 | slug 生成 | 中文保留 + 英文小写 + 连字符 + 长度 ≤ 40 |
+| §4 | Stage 4 生成方式 | α 方案：一次大 Claude 调用 |
+| §5 | spec-archiver 职责 | 搬运 + meta.json + .claude diff 检查 |
+| §5 | 归档冲突 | 同日同 slug 硬失败 |
+| §5 | .claude diff 触发 | 方案 A 约定标题匹配，apply 失败降级为 warning |
+| §5 | related_specs | 只记录最近 1 条 |
+| §6 | 模板数量与分层 | requirements/tasks 共用，design 按 type 分 3 种 |
+| §6 | 模板铁律 | 强制章节 + 统一 `##` 层级 + `<xxx>` 占位符 |
+| §7 | 规范文件缺失 | 方案 A（严格失败）+ 独立 `/bootstrap-claude-docs` 命令 |
+
+---
+
+## 9. 待确认的跨节待定项
+
+| # | 来源 | 待确认点 |
+|---|---|---|
+| 1 | §4.9 | 一致性自检失败后是否允许"最多 1 次修复"，还是严格不重试 |
+
+_其他原本的待确认项均已在 §4-§7 的决策状态表里锁定。_
+
+---
+
+## 10. 下一步
+
+- [ ] 用户 review 本 design.md
+- [ ] 锁定 §9 的 1 项剩余待定项
+- [ ] 调用 `superpowers:writing-plans` skill 输出实施计划
+- [ ] 按计划执行开发（不在本 spec 范围内）
