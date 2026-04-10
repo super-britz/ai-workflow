@@ -1111,4 +1111,288 @@ subagent 收到后：
 
 ---
 
-<!-- §5-§7 将在后续 commit 中追加 -->
+## 5. spec-archiver skill 内部设计
+
+### 5.1 职责边界
+
+spec-archiver 只做三件事：
+
+1. **搬运**：`specs/_drafts/<slug>/` → `specs/YYYY-MM-DD-<slug>/`
+2. **写 meta.json**：记录归档元数据，供后续检索和审计
+3. **diff 检查 + 规范文件更新**：如果本次 spec 引入了需要沉淀到 `.claude/` 的新架构/安全/规范决策，Claude 生成 diff 后写回 `.claude/` 对应文件
+
+它**不负责**：
+
+- 生成 spec 三件套（spec-writer 的职责）
+- 实际写代码（后续 development 步骤的职责）
+- 决定 slug 或 type（spec-writer 已经定好）
+- 深度校验三件套内容质量（spec-writer Stage 5 自检已完成，spec-archiver 只做"文件是否存在且非空"的轻量检查）
+
+### 5.2 skill frontmatter
+
+```yaml
+---
+name: spec-archiver
+description: 把 specs/_drafts/<slug> 归档到 specs/YYYY-MM-DD-<slug>，写 meta.json，diff 检查 .claude 规范文件。被 spec-workflow subagent 顺序调用，不面向用户直接调用。
+user-invocable: false
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Bash
+  - Glob
+  - Grep
+---
+```
+
+关键点：
+
+- `user-invocable: false` — 和 spec-writer 对齐，只能被 subagent 调用
+- 需要 `Bash` 做目录移动（`mv`）、日期获取（`date +%Y-%m-%d`）、获取 git HEAD（`git rev-parse HEAD`）
+- 需要 `Glob` 检查归档冲突和历史同 slug spec
+
+### 5.3 输入契约
+
+subagent 调用 spec-archiver 时传入：
+
+```yaml
+drafts_path: specs/_drafts/<slug>/
+slug: user-profile-page
+type: fullstack
+source_meta:
+  source_type: prd_and_design
+  prd_url: https://jira.../PROJ-123
+  design_url: https://figma.com/design/abc
+  design_tool: figma
+  user_type_specified: null           # 若用户显式指定了 type 则填入对应值，否则 null
+  prd_fetched_at: 2026-04-10T14:23:10Z
+spec_writer_stats:
+  type_classification: auto           # auto | user-specified
+  consistency_check: passed
+  retry_count: 0
+```
+
+### 5.4 归档路径生成规则
+
+```
+1. current_date = $(date +%Y-%m-%d)       # 主机时区
+2. archive_path = specs/<current_date>-<slug>/
+
+3. 冲突检查：
+   a. 如果 specs/<current_date>-<slug>/ 已存在
+      → FAILED (stage: archive-1-validate-path,
+                reason: "同日同 slug 已归档，若要覆盖请先手动删除")
+   b. Glob: specs/*-<slug>/ （不含当前日期）
+      → 如果有命中，记录最近 1 条作为 related_specs
+      → PROGRESS: 检测到历史同 slug spec: <path>
+
+4. mv specs/_drafts/<slug>/ → specs/<current_date>-<slug>/
+5. Glob 验证 mv 成功（目标目录下三件套齐备）
+```
+
+**为什么同日同 slug 直接失败而不是自动改名**：短时间内重复归档同一个 spec 往往是手快/误触，失败更安全。真要重做，用户手动删旧的再跑一次即可。
+
+**为什么 related_specs 只留最近 1 条**：一个长期迭代的 feature 会累积很多归档，全部列出来会让 meta.json 越滚越大。最近 1 条已经足够让用户"顺藤摸瓜"找到链式历史，不需要 spec-archiver 维护完整图谱。
+
+### 5.5 归档前轻量存在性检查
+
+spec-writer 的 Stage 5 已经做了一致性自检，但 spec-archiver 仍然要做一次**防御性检查**：
+
+```
+Stage archive-2 (move-drafts) 前置条件：
+  for file in ['requirements.md', 'design.md', 'tasks.md']:
+    path = drafts_path + file
+    if not exists(path) or size(path) == 0:
+      FAILED (stage: archive-1-validate-path,
+              reason: "三件套中 <file> 缺失或为空")
+```
+
+**只检查存在性和非空**，不检查内容质量 — 避免和 spec-writer 职责重叠。这一步主要防止"spec-writer 声称成功但文件系统异常"这种极端情况。
+
+### 5.6 meta.json 格式
+
+```json
+{
+  "slug": "user-profile-page",
+  "type": "fullstack",
+  "archived_at": "2026-04-10T14:25:33Z",
+  "archived_path": "specs/2026-04-10-user-profile-page/",
+  "git_commit_at_archive": "a1b2c3d4e5f6...",
+  "source": {
+    "source_type": "prd_and_design",
+    "prd_url": "https://jira.../PROJ-123",
+    "design_url": "https://figma.com/design/abc",
+    "design_tool": "figma",
+    "user_type_specified": null,
+    "prd_fetched_at": "2026-04-10T14:23:10Z"
+  },
+  "spec_writer": {
+    "type_classification": "auto",
+    "consistency_check": "passed",
+    "retry_count": 0
+  },
+  "claude_updates": {
+    "detected": false,
+    "updated_files": [],
+    "diff_summary": "",
+    "error": null
+  },
+  "related_specs": []
+}
+```
+
+**字段解释**：
+
+| 字段 | 说明 |
+|---|---|
+| `git_commit_at_archive` | 归档那一刻的 `git rev-parse HEAD`。方便后续"这份 spec 对应当时的哪个代码状态"追溯 |
+| `source.user_type_specified` | 若用户用 `type=` 显式指定了，这里记录对应值；否则 `null` |
+| `spec_writer.type_classification` | `auto` 或 `user-specified`，和 `user_type_specified` 配合使用 |
+| `claude_updates.error` | 若 diff 应用失败，这里记录错误原因（见 §5.7） |
+| `related_specs` | 最多 1 条：历史上最近一次相同 slug 的归档路径 |
+
+### 5.7 diff 检查 .claude 规范文件
+
+这是 spec-archiver 最重的一步，核心思路：**按约定标题触发 + Claude 生成 unified diff + 尝试 apply**。
+
+#### 5.7.1 触发规则（方案 A：标题匹配）
+
+spec-archiver 只在 design.md 出现以下**强约定标题**时触发对应规范文件更新：
+
+| design.md 标题 | 触发更新的 .claude 文件 |
+|---|---|
+| `## 架构变更` 或 `## Architecture Changes` | `.claude/ARCHITECTURE.md` |
+| `## 安全考虑` 或 `## Security Considerations` | `.claude/SECURITY.md` |
+| `## 编码约定变更` 或 `## Coding Guidelines Update` | `.claude/CODING_GUIDELINES.md` |
+
+**为什么选方案 A 而不是"Claude 自主判断"**：
+
+- 方案 A 可预测、可测试、可审计 — 没写这些标题就不会误报
+- 强制要求 spec-writer 的 backend/frontend/fullstack 模板**必须**包含这些章节（没变更时写"无"），让约定稳定落地
+- 方案 B（Claude 自主判断）灵活但不确定性高，MVP 阶段不值得承担这个复杂度
+
+#### 5.7.2 每个触发章节的处理流程
+
+```
+for (heading, claude_file) in triggered_sections:
+  section_content = extract_section(design.md, heading)
+  if section_content == "无" or empty:
+    continue  # 约定了但本次没有变更
+
+  existing = read(claude_file)
+
+  # 让 Claude 生成 unified diff
+  diff = claude.generate_diff(
+    base=existing,
+    instruction=f"把 design.md 的 <{heading}> 章节的内容合并进 {claude_file}，"
+                f"保留现有结构，只追加/修改相关段落，输出标准 unified diff 格式"
+  )
+
+  # 尝试应用
+  try:
+    apply_patch(claude_file, diff)
+    updated_files.append(claude_file)
+    diff_summary += summarize(diff)
+  except PatchApplyError as e:
+    # 降级处理：不阻断整个归档
+    claude_updates.error = f"diff apply failed for {claude_file}: {e}"
+    PROGRESS: ⚠️ {claude_file} diff 应用失败，已跳过，请手动同步
+    continue
+```
+
+#### 5.7.3 diff 应用失败的降级策略
+
+**降级而不是失败**的理由：
+
+- 归档本身已经成功（目录和 meta.json 都写好了）
+- `.claude/` 更新失败不影响当前 spec 的可用性
+- 硬失败反而会让用户困惑"我的 spec 到底归档没"
+- 保留 error 信息到 meta.json + TG warning，用户可以事后手动处理
+
+**TG 提醒格式**（由 subagent 转发）：
+
+```
+⚠️ spec 已归档，但 .claude/ARCHITECTURE.md 自动更新失败：
+   <error reason>
+请手动同步 design.md 的「## 架构变更」章节到 .claude/ARCHITECTURE.md
+```
+
+### 5.8 返回值契约
+
+**成功路径**：
+
+```json
+{
+  "status": "success",
+  "archived_path": "specs/2026-04-10-user-profile-page/",
+  "meta_path": "specs/2026-04-10-user-profile-page/meta.json",
+  "claude_updates": {
+    "detected": true,
+    "updated_files": [".claude/ARCHITECTURE.md"],
+    "diff_summary": "新增 UserProfileService 到 Backend Services 列表",
+    "error": null
+  },
+  "timeline": [
+    ["00:00", "校验归档路径 + 存在性检查"],
+    ["00:01", "mv _drafts → 2026-04-10-user-profile-page"],
+    ["00:02", "写 meta.json"],
+    ["00:04", "diff 检查 .claude"],
+    ["00:12", "更新 .claude/ARCHITECTURE.md"]
+  ]
+}
+```
+
+**失败路径**：
+
+```json
+{
+  "status": "failed",
+  "stage": "archive-1-validate-path",
+  "reason": "同日同 slug 已归档：specs/2026-04-10-user-profile-page/",
+  "partial_files": []
+}
+```
+
+subagent 收到后：
+
+- `status == "success"` → 组装顶层 `SUCCESS` 块并透传 claude_updates
+- `status == "failed"` → 打印顶层 `FAILED`，透传 stage 和 reason
+
+### 5.9 子 Stage 划分
+
+| Stage | 名称 | 关键动作 | 可能失败原因 | 失败后行为 |
+|---|---|---|---|---|
+| archive-1 | validate-path | 冲突检查、存在性检查、related_specs 探测 | 同日同 slug、三件套缺失 | 硬失败，不 mv |
+| archive-2 | move-drafts | `mv _drafts/<slug> → <date>-<slug>` | 文件系统权限、磁盘空间 | 硬失败 |
+| archive-3 | write-meta | 写 meta.json（含 git HEAD） | 写入异常 | 硬失败，但 mv 已成功不回滚 |
+| archive-4 | diff-claude | 检测 design.md 约定标题、Claude 生成 diff、apply | diff apply 失败 | **降级**（记 error，不阻断） |
+| archive-5 | return-summary | 组装返回值 | - | - |
+
+**失败原子性约定**：
+
+- archive-1 失败 → 完全没动文件系统，安全
+- archive-2 失败 → 可能留半 mv 状态（极端情况），让 subagent 透传原因给用户手动处理
+- archive-3 失败 → 归档目录已存在但没有 meta.json，用户可以手动补一个或重跑 archive-3
+- archive-4 失败（diff apply）→ **降级**而非阻断，meta.json 里记 error
+- archive-4 失败（其他异常如 Claude 生成 diff 失败）→ 同样降级
+
+### 5.10 第 5 节决策状态
+
+**已定决策**：
+
+| # | 决策点 | 结论 |
+|---|---|---|
+| 1 | diff 检查触发方式 | ✅ 方案 A：约定标题匹配，强制 spec-writer 模板包含指定标题 |
+| 2 | diff apply 失败处理 | ✅ 降级为 warning，不阻断归档，meta.json 记 error |
+| 3 | related_specs 数量 | ✅ 只保留最近 1 条 |
+| 4 | 归档前存在性检查 | ✅ 做轻量检查（文件存在 + 非空），不检查内容质量 |
+| 5 | meta.json 是否记 git HEAD | ✅ 加 `git_commit_at_archive` 字段 |
+| 6 | 同日同 slug 冲突 | ✅ 硬失败，不自动改名 |
+
+**剩余待确认**：
+
+_（§5 暂无待确认点，所有决策已锁定）_
+
+---
+
+<!-- §6-§7 将在后续 commit 中追加 -->
