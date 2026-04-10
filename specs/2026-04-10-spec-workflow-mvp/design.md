@@ -709,4 +709,351 @@ spec-writer 和 spec-archiver 内部自己也会有"生成子步骤失败"的情
 
 ---
 
-<!-- §4-§7 将在后续 commit 中追加 -->
+## 第 4 节：spec-writer skill 内部设计
+
+spec-writer 是整个 MVP 的"大脑"，负责把 subagent 传入的结构化输入转换为三件套。
+
+### 4.1 SKILL.md frontmatter 与文件结构
+
+**目录**：`.agents/skills/spec-writer/`
+
+```
+.agents/skills/spec-writer/
+├── SKILL.md                  ← 主指令，被 subagent invoke 时加载
+├── templates/
+│   ├── requirements.md       ← 通用需求骨架（§6 会写出完整内容）
+│   ├── backend.md            ← design.md 后端模板
+│   ├── frontend.md           ← design.md 前端模板
+│   ├── fullstack.md          ← design.md 全栈模板
+│   └── tasks.md              ← 通用任务骨架
+└── checklists/
+    └── consistency-check.md  ← §4.7 的一致性自检 checklist
+```
+
+**SKILL.md frontmatter**：
+
+```yaml
+---
+name: spec-writer
+description: 把结构化需求输入（PRD + 设计稿 + 用户补充）转换为 specs/_drafts/<slug>/ 下的三件套（requirements/design/tasks），按 backend/frontend/fullstack 选模板。只被 spec-workflow subagent invoke，不主动激活。
+user-invocable: false
+---
+```
+
+**关键字段**：
+
+- `user-invocable: false`：Claude 不会把这个 skill 的 description 加入日常对话的 skill 索引。只能由绑定它的 subagent（`spec-workflow`）或显式 `Skill("spec-writer", ...)` 调用触发
+- description 里明确写**输入契约**（"结构化需求输入 PRD + 设计稿 + 用户补充"）和**输出契约**（"三件套到 _drafts"），让 subagent 知道怎么调
+
+### 4.2 执行流程（6 个阶段）
+
+spec-writer 在 SKILL.md body 里定义固定的 6 步流程：
+
+```
+[Stage 1] 解析输入 + 分类 type
+   │
+   ▼
+[Stage 2] 生成 slug (从需求标题推导)
+   │
+   ▼
+[Stage 3] 读 .claude/ARCHITECTURE.md + SECURITY.md + CODING_GUIDELINES.md
+   │     (缺任何一份 → 立即 FAILED)
+   │
+   ▼
+[Stage 4] 按 type 选模板，生成三件套到 specs/_drafts/<slug>/
+   │     - requirements.md (通用模板)
+   │     - design.md (backend/frontend/fullstack 模板)
+   │     - tasks.md (通用模板但顺序按 type 定)
+   │
+   ▼
+[Stage 5] 一致性自检 (§4.7 的 checklist)
+   │     - 失败 → 最多 1 次尝试修复 → 仍失败则 FAILED
+   │
+   ▼
+[Stage 6] 返回 {slug, type, drafts_path, source_meta}
+```
+
+每个 Stage 开始前输出 `PROGRESS:` 一行。
+
+**关于 Stage 5 的"最多 1 次修复"**：这是对"不自动重试"原则的**一个例外**。理由：
+
+- 一致性自检发现的是"自己生成的三件套内部不一致"（比如 tasks.md 引用了 design.md 里不存在的 API），这是 spec-writer 自己可以修复的错误
+- 修复 = 重新生成有问题的单个文件，不是重跑整个流程
+- 限 1 次：避免"改一处引入两处"的无限循环
+
+**Stage 3 的严格性**：三份规范文件缺任何一份就 FAILED。不做"缺了就跳过"这种降级 — 规范文件是 design 的依据，缺了生成出的 design 就是空中楼阁。兜底方案见 §7 bootstrap。
+
+### 4.3 Type 分类规则
+
+spec-writer 的 Stage 1 要做"这是 backend / frontend / fullstack 哪一类"的判断。规则写在 SKILL.md 里，让 Claude 按顺序匹配：
+
+```
+分类启发式（按顺序匹配第一个命中的规则）：
+
+1. 如果 design_source 非 N/A (含 figma / stitch / figjam 等)
+   → 必然涉及前端
+   → 如果 PRD 内容里提到数据库 / API / 认证 / 后端服务
+       → type = fullstack
+   → 否则
+       → type = frontend
+
+2. 如果 PRD 内容里包含以下关键词
+   ["API", "endpoint", "database", "schema", "迁移", "认证",
+    "授权", "后端", "服务", "queue", "cron", "webhook"]
+   且不包含 ["页面", "组件", "UI", "样式", "响应式", "按钮"]
+   → type = backend
+
+3. 如果 PRD 内容里包含以下关键词
+   ["页面", "组件", "UI", "样式", "响应式", "交互", "表单",
+    "按钮", "弹窗", "路由"]
+   且不包含 ["API", "endpoint", "database"]
+   → type = frontend
+
+4. 混合或无法明确判断
+   → type = fullstack (默认)
+```
+
+**"fullstack 作为默认"的理由**：
+
+- fullstack 模板包含前后端两部分 + 共享契约章节，信息最全
+- 如果 spec-writer 判断错了（实际是纯后端，被判成 fullstack），输出的 design 只是多了前端章节，**不会丢信息**
+- 反过来判成 backend 却实际需要前端就会**丢失前端设计**，损失更大
+
+**分类写入 requirements.md frontmatter**：
+
+```yaml
+---
+name: <从输入提取的需求标题>
+type: <backend | frontend | fullstack>
+priority: <P0 | P1 | P2，默认 P1>
+source:
+  type: <prd_only | design_only | prd_and_design | natural_language>
+  prd_url: <URL 或 null>
+  design_url: <URL 或 null>
+created: 2026-04-10
+---
+```
+
+后续 spec-archiver 和未来的 task-executor / codex-reviewer 都能读这个 frontmatter 做差异化处理。
+
+### 4.4 读取 `.claude/` 规范文件的方式
+
+用户最初的需求里说"如果 Claude Code 只认 CLAUDE.md，其他规范文件通过 @ 引用"。**这里有个概念澄清**：
+
+`@file.md` 引用是 **Claude Code 用户消息层**的预处理特性：
+
+- 用户在对话里输入 `@xxx.md` → Claude Code 把文件内容 inline 展开到用户消息里
+- **SKILL.md / AGENT.md / commands/*.md 都不经过这层预处理**，里面写 `@.claude/ARCHITECTURE.md` 就是一串字面字符，不会被替换
+
+所以无论是否分层、是否在 subagent 里，SKILL.md 里的 `@` 都不起作用。**只能用 `Read` 工具在运行时加载**。
+
+**正确做法**：skill 直接用 `Read` 工具读取文件，写进 SKILL.md 的 Stage 3 步骤：
+
+```markdown
+### Stage 3: 读取 .claude 规范文件
+
+依次用 Read 工具加载:
+
+1. Read: .claude/ARCHITECTURE.md
+2. Read: .claude/SECURITY.md
+3. Read: .claude/CODING_GUIDELINES.md
+
+全部成功 → 把内容拼接成 "project_norms" 变量，作为 Stage 4 模板渲染的输入之一
+
+任一失败（文件不存在、读取出错）→ 立即返回:
+  {status: "failed", stage: "stage-3-read-norms", reason: "未找到 .claude/<filename>"}
+```
+
+**每次跑都要重新 Read 一次**，这是必要开销：规范文件更新后立即生效，不需要"重启 skill"或类似操作。
+
+### 4.5 Slug 生成规则
+
+`slug` 是三件套归档目录名的一部分（`specs/YYYY-MM-DD-<slug>/`）。规则：
+
+```
+从需求标题推导 slug:
+1. 移除标点和特殊符号（保留中英文、数字、空格、连字符）
+2. 中文字符保留原样
+3. 英文字母统一转小写
+4. 空格统一为 "-"
+5. 连续的 "-" 合并为一个
+6. 首尾的 "-" 去掉
+7. 长度 ≤ 40 字符（按 Unicode 字符数，不是 byte 数）
+8. 如果最终为空（比如标题全是符号）→ ticket-<HHMMSS>
+```
+
+**示例**：
+
+| 原始标题 | slug |
+|---|---|
+| `用户个人资料页` | `用户个人资料页` |
+| `User Profile Page` | `user-profile-page` |
+| `Add OAuth Login (Google)` | `add-oauth-login-google` |
+| `用户头像 Upload` | `用户头像-upload` |
+| `API 接口重构` | `api-接口重构` |
+| `@#$%` | `ticket-143022` |
+
+**归档目录示例**：
+
+```
+specs/2026-04-10-用户个人资料页/
+specs/2026-04-10-user-profile-page/
+specs/2026-04-10-用户头像-upload/
+specs/2026-04-10-api-接口重构/
+```
+
+**为什么不用 UUID**：slug 要人类可读，方便归档目录眼看就知道是哪个需求。
+
+**Slug 冲突处理**：
+
+- spec-writer 生成 slug 后，检查 `specs/_drafts/<slug>/` 是否已存在
+- 冲突 → 追加 `-2` / `-3` 后缀直到找到空位
+- 这是 `_drafts` 层面的冲突；归档阶段（`specs/YYYY-MM-DD-<slug>/`）的日期前缀基本消除了冲突可能性
+
+**两个潜在坑**（非 blocker）：
+
+1. **macOS 文件系统大小写默认不敏感**，git 和 Linux CI 大小写敏感。MVP 阶段在 macOS 单机跑没问题，将来团队协作或上 CI 要注意
+2. **中文路径**在 git / bash / VS Code 里都没问题，极少数老工具可能不识别。本地 macOS 用无忧
+
+### 4.6 三件套生成的调用约定
+
+Stage 4 要生成三个文件。用**同一个 Claude 上下文内依次调用 Write**，而不是拆成 3 个子调用：
+
+```
+Stage 4 开始:
+  PROGRESS: 开始生成三件套
+
+  构造完整的"生成上下文":
+    - project_norms (Stage 3 读到的规范)
+    - input_summary (PRD + 设计稿 + 用户补充)
+    - type (Stage 1 判断的)
+    - slug (Stage 2 生成的)
+
+  加载 3 个模板文件（Read 工具）:
+    - templates/requirements.md
+    - templates/{type}.md  ← backend/frontend/fullstack 选一个
+    - templates/tasks.md
+
+  按顺序生成并 Write:
+    PROGRESS: 生成 requirements.md
+    Write: specs/_drafts/<slug>/requirements.md
+    PROGRESS: 生成 design.md
+    Write: specs/_drafts/<slug>/design.md
+    PROGRESS: 生成 tasks.md
+    Write: specs/_drafts/<slug>/tasks.md
+```
+
+**为什么顺序很重要**：
+
+- requirements.md 先写 → 确定用户故事和验收标准
+- design.md 基于 requirements 写 → design 的章节要能覆盖每个验收标准
+- tasks.md 基于 design 写 → 每个 task 对应 design 里的一个具体实现点
+
+这个顺序让 Claude 在同一个 context 里逐层展开，后一个文件能引用前一个的内容。**不要倒过来**（会导致 tasks 里引用不存在的 design 章节）。
+
+### 4.7 一致性自检 checklist
+
+Stage 5 自检的目的：发现三件套内部的**逻辑不一致**。
+
+`checklists/consistency-check.md` 的内容（大纲）：
+
+```markdown
+# spec-writer 一致性自检 checklist
+
+## Cross-file consistency
+
+- [ ] requirements.md 的每一条验收标准都在 design.md 里有对应章节覆盖
+- [ ] design.md 的每一个 API/endpoint/组件/页面，在 tasks.md 里都有对应的实现任务
+- [ ] tasks.md 里没有引用 design.md 之外的"凭空任务"
+- [ ] requirements.md frontmatter 的 type 与 design.md 选用的模板一致
+- [ ] source 字段在 requirements.md frontmatter 里如实记录了 PRD 和设计稿 URL
+
+## Internal consistency
+
+- [ ] requirements.md 的"范围外"明确列出了不做的事
+- [ ] design.md 的每个章节都不为空（模板里的 placeholder 都被替换了）
+- [ ] tasks.md 的任务顺序符合 §4.6 的 type 规则
+    - backend: 模型 → migration → API → 业务逻辑 → 测试
+    - frontend: 页面骨架 → 组件 → 数据接入 → 交互 → a11y → 测试
+    - fullstack: Backend 全部完成 → Frontend
+- [ ] tasks.md 里没有 "TODO" / "FIXME" / "<placeholder>" 等未填充的标记
+
+## Metadata
+
+- [ ] requirements.md 的 frontmatter 包含: name, type, priority, source, created
+- [ ] 三件套文件名和路径都在 specs/_drafts/<slug>/ 下
+```
+
+**自检执行方式**：
+
+- Claude 读三个生成的文件，对照 checklist 一项项判断
+- 发现违反 → 记录违反项
+- 全部通过 → `PROGRESS: 一致性自检通过`，进入 Stage 6
+- 有违反 → `PROGRESS: 自检发现 N 项违反，尝试修复`
+  - 只修复违反项对应的那一个文件（重写该文件）
+  - 修复后再跑一次自检
+  - 仍有违反 → `FAILED: consistency check failed after 1 retry, violations: [...]`
+
+### 4.8 spec-writer 返回值契约
+
+spec-writer 被 subagent 调用完成后，返回一个结构化对象（Skill 工具的返回值）：
+
+**成功**：
+
+```
+{
+  "status": "success",
+  "slug": "user-profile-page",
+  "type": "fullstack",
+  "drafts_path": "specs/_drafts/user-profile-page/",
+  "files": [
+    "specs/_drafts/user-profile-page/requirements.md",
+    "specs/_drafts/user-profile-page/design.md",
+    "specs/_drafts/user-profile-page/tasks.md"
+  ],
+  "source_meta": {
+    "source_type": "prd_and_design",
+    "prd_url": "https://jira.example.com/browse/PROJ-123",
+    "design_url": "https://www.figma.com/design/abc/..."
+  },
+  "consistency_check": "passed",
+  "timings": {
+    "stage-1-classify": 2.1,
+    "stage-2-slug": 0.3,
+    "stage-3-norms": 1.5,
+    "stage-4-generate": 28.7,
+    "stage-5-check": 5.2
+  }
+}
+```
+
+**失败**：
+
+```
+{
+  "status": "failed",
+  "stage": "stage-3-read-norms",
+  "reason": "未找到 .claude/SECURITY.md",
+  "partial_files": []
+}
+```
+
+subagent 收到后：
+
+- `status == "success"` → 进入 spec-archiver 调用
+- `status == "failed"` → 立刻打印 subagent 的 `FAILED` 顶层块，透传这里的 `stage` 和 `reason`
+
+### 4.9 第 4 节待确认点
+
+1. **分类启发式是否够用**：§4.3 的 4 条规则基本覆盖常见场景。脑子里有没有"第一版就要处理的边界 case"（比如 DevOps 任务、文档任务、数据迁移脚本）？第一版是否明确"这些不在 3 种 type 内的一律按 fullstack 兜底"？
+2. **Slug 中英文混合**：已确认规则（§4.5）。实现时用 Bash 调 Node 的 `pinyin`/JS 正则处理即可，不需要外部包。
+3. **一致性自检失败后的"最多 1 次修复"**：§4.2 里做了这个例外决策。是否接受这个例外，还是要严格一律不重试（自检失败就直接 FAILED）？
+4. **规范文件缺失的处理**：
+   - **方案 A**：Stage 3 严格失败（当前设计），用户必须先 bootstrap
+   - **方案 B**：缺文件时降级 — 用"空规范 + 在 design.md 开头加一行警告"继续生成
+   - **方案 C**：自动触发 bootstrap（spec-writer 调用另一个 skill 创建空规范文件模板）
+   - 第一版倾向 A（显式失败 + 提示用户走 bootstrap），但等待确认
+
+---
+
+<!-- §5-§7 将在后续 commit 中追加 -->
