@@ -74,3 +74,22 @@ test("spec-writer 模板: design-frontend.md 含 3 个强制章节 + 前端专�
   expect(md.headings).toContain("## 可访问性");
   expect(md.headings).toContain("## 性能");
 });
+
+const DESIGN_FULLSTACK =
+  ".agents/skills/spec-writer/templates/design-fullstack.md";
+
+test("spec-writer 模板: design-fullstack.md 含 3 个强制章节 + 全栈专属", () => {
+  const md = parseMarkdown(DESIGN_FULLSTACK);
+  expect(md.exists).toBe(true);
+  // 铁律 1
+  expect(md.headings).toContain("## 架构变更");
+  expect(md.headings).toContain("## 安全考虑");
+  expect(md.headings).toContain("## 编码约定变更");
+  // 全栈专属
+  expect(md.headings).toContain("## 架构定位");
+  expect(md.headings).toContain("## 端到端流程");
+  expect(md.headings).toContain("## 前后端契约");
+  expect(md.headings).toContain("## 后端部分");
+  expect(md.headings).toContain("## 前端部分");
+  expect(md.headings).toContain("## 前后端联调策略");
+});
