@@ -54,3 +54,23 @@ test("spec-writer 模板: design-backend.md 含 3 个强制章节 + 后端专属
   // 占位符约定
   expect(md.body).toContain("<feature name>");
 });
+
+const DESIGN_FRONTEND =
+  ".agents/skills/spec-writer/templates/design-frontend.md";
+
+test("spec-writer 模板: design-frontend.md 含 3 个强制章节 + 前端专属", () => {
+  const md = parseMarkdown(DESIGN_FRONTEND);
+  expect(md.exists).toBe(true);
+  // 铁律 1
+  expect(md.headings).toContain("## 架构变更");
+  expect(md.headings).toContain("## 安全考虑");
+  expect(md.headings).toContain("## 编码约定变更");
+  // 前端专属
+  expect(md.headings).toContain("## 页面与路由");
+  expect(md.headings).toContain("## 组件拆分");
+  expect(md.headings).toContain("## 状态管理");
+  expect(md.headings).toContain("## 接口调用");
+  expect(md.headings).toContain("## 样式与主题");
+  expect(md.headings).toContain("## 可访问性");
+  expect(md.headings).toContain("## 性能");
+});
