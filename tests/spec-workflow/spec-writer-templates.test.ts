@@ -17,3 +17,20 @@ test("spec-writer 模板: requirements.md 含全部固定章节", () => {
   expect(md.body).toContain("<");
   expect(md.body).toContain(">");
 });
+
+const TASKS_TEMPLATE = ".agents/skills/spec-writer/templates/tasks.md";
+
+test("spec-writer 模板: tasks.md 含 Stage / Task / 测试章节", () => {
+  const md = parseMarkdown(TASKS_TEMPLATE);
+  expect(md.exists).toBe(true);
+  expect(md.headings).toContain("## 任务总览");
+  expect(md.headings).toContain("## Stage 1: <阶段名>");
+  expect(md.headings).toContain("### Task 1.1: <任务名>");
+  expect(md.headings).toContain("## 测试任务");
+  expect(md.headings).toContain("## 风险与回滚");
+  expect(md.body).toContain("**目标**");
+  expect(md.body).toContain("**步骤**");
+  expect(md.body).toContain("**验收**");
+  expect(md.body).toContain("**预估**");
+  expect(md.body).toContain("**依赖**");
+});
