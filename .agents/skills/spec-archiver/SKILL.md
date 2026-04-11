@@ -137,10 +137,12 @@ spec_writer_stats:
   | `## 安全考虑` 或 `## Security Considerations` | `.claude/SECURITY.md` |
   | `## 编码约定变更` 或 `## Coding Guidelines Update` | `.claude/CODING_GUIDELINES.md` |
 
+- **存在性前置检查**：对于每个触发的 `.claude/<file>`，若其不存在，跳过该文件，把该条写入 `claude_updates.error`（例："`.claude/ARCHITECTURE.md` 不存在，跳过 diff 应用"），不创建新文件。
+
 - 对每一个**触发**章节（章节内容不为"无"且非空）：
   1. Read 对应的 `.claude/<file>`
   2. 让 Claude 生成 unified diff，instruction："把 design.md 的 <heading> 章节的内容合并进 <claude_file>，保留现有结构，只追加/修改相关段落，输出标准 unified diff 格式"
-  3. 尝试 apply patch（用 Edit 工具或 Bash patch 命令）
+  3. apply 优先用 Edit 工具；若 Edit 失败再尝试 Bash `patch` 命令；两者均失败才触发降级。
   4. **成功** → 把文件名加入 `claude_updates.updated_files`，把 diff 摘要追加到 `claude_updates.diff_summary`
   5. **失败** → **降级处理**（不阻断整个归档）：
      - `claude_updates.error = "diff apply failed for <claude_file>: <error>"`
@@ -148,6 +150,8 @@ spec_writer_stats:
      - 继续处理下一个章节
 
 - **降级理由**：归档主体已经成功（目录和 meta.json 都写好了），`.claude/` 更新失败不影响当前 spec 的可用性。硬失败反而让用户困惑"我的 spec 到底归档没"。保留 error 信息到 meta.json + warning 给主线程，用户事后手动处理。
+
+- **汇总 detected 字段**：若 `claude_updates.updated_files` 非空，将 `claude_updates.detected` 字段置为 `true`；否则保持 `false`。
 
 - 全部章节处理完后，**回写 meta.json**（用 Edit 工具更新 `claude_updates` 段）
 
