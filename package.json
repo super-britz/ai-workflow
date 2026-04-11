@@ -37,7 +37,8 @@
     "deploy": "turbo -F @ai-workflow/infra deploy",
     "destroy": "turbo -F @ai-workflow/infra destroy",
     "check": "ultracite check",
-    "fix": "ultracite fix"
+    "fix": "ultracite fix",
+    "test:specs": "bun test tests/spec-workflow/"
   },
   "dependencies": {
     "@ai-workflow/env": "workspace:*",
