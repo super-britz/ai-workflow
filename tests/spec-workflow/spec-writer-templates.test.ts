@@ -34,3 +34,23 @@ test("spec-writer 模板: tasks.md 含 Stage / Task / 测试章节", () => {
   expect(md.body).toContain("**预估**");
   expect(md.body).toContain("**依赖**");
 });
+
+const DESIGN_BACKEND = ".agents/skills/spec-writer/templates/design-backend.md";
+
+test("spec-writer 模板: design-backend.md 含 3 个强制章节 + 后端专属", () => {
+  const md = parseMarkdown(DESIGN_BACKEND);
+  expect(md.exists).toBe(true);
+  // 铁律 1: 3 个强制章节
+  expect(md.headings).toContain("## 架构变更");
+  expect(md.headings).toContain("## 安全考虑");
+  expect(md.headings).toContain("## 编码约定变更");
+  // 后端专属
+  expect(md.headings).toContain("## 架构定位");
+  expect(md.headings).toContain("## API 契约");
+  expect(md.headings).toContain("## 数据模型");
+  expect(md.headings).toContain("## 核心流程");
+  expect(md.headings).toContain("## 性能与扩展性");
+  expect(md.headings).toContain("## 错误处理与降级");
+  // 占位符约定
+  expect(md.body).toContain("<feature name>");
+});
