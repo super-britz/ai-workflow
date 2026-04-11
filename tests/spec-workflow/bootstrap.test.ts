@@ -27,3 +27,18 @@ test("bootstrap: SECURITY 模板存在且包含必需骨架章节", () => {
   expect(md.headings).toContain("## 敏感数据处理");
   expect(md.headings).toContain("## 已知风险与缓解");
 });
+
+const CODING_TEMPLATE =
+  ".agents/skills/bootstrap-claude-docs/templates/CODING_GUIDELINES.md";
+
+test("bootstrap: CODING_GUIDELINES 模板存在且包含必需骨架章节", () => {
+  const md = parseMarkdown(CODING_TEMPLATE);
+  expect(md.exists).toBe(true);
+  expect(md.headings).toContain("# Coding Guidelines");
+  expect(md.headings).toContain("## 语言风格");
+  expect(md.headings).toContain("## 错误处理");
+  expect(md.headings).toContain("## 日志");
+  expect(md.headings).toContain("## 测试");
+  expect(md.headings).toContain("## 代码审查");
+  expect(md.headings).toContain("## 依赖管理");
+});
