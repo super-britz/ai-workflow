@@ -28,7 +28,7 @@ skills:
 2. `## PRD 内容` — 主线程从 Chrome 读取或用户自然语言（可能为 N/A）
 3. `## 设计稿上下文` — 主线程从 figma MCP / Stitch / 截图提取（可能为 N/A）
 4. `## 用户补充` — 可选
-5. `## 你的任务` — 固定 2 步（invoke spec-writer → invoke spec-archiver → 输出结构化结果）
+5. `## 你的任务` — 固定 3 步（invoke spec-writer → invoke spec-archiver → 输出结构化结果）
 
 ## 执行流程
 
@@ -66,7 +66,7 @@ type: <从 spec-writer 返回值取>
 source_meta: <从 spec-writer 返回值取>
 spec_writer_stats:
   type_classification: <从 spec-writer 返回值取>
-  consistency_check: <从 spec-writer 返回值取>
+  consistency_check: passed   # spec-writer 成功时此字段固定为 passed
   retry_count: <从 spec-writer 返回值取>
 ```
 
@@ -149,7 +149,7 @@ partial_files: []
 
 ## 失败约定
 
-- 任何步骤失败 → 立即返回 `FAILED: <原因>`
+- 任何步骤失败 → 立即输出 `FAILED` 顶层块（见 §返回结构），字段含 `stage` / `reason` / `partial_files`
 - **不自动重试**
 - **不尝试部分回滚**（spec-writer 写了一半 → 文件留在 _drafts，等用户手动 review/清理）
 - spec-writer / spec-archiver 内部失败也照此原则处理
